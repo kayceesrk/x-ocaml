@@ -24,13 +24,13 @@ let render_messages cm =
   let ranges =
     Array.of_list
     @@ List.map (fun (at, msg) ->
-           range ~from:at ~to_:at
-           @@ widget ~block:true ~side:99
-           @@ Widget.make (fun () -> msg))
+        range ~from:at ~to_:at
+        @@ widget ~block:true ~side:99
+        @@ Widget.make (fun () -> msg))
     @@ List.filter (fun (at, _) -> at <= String.length doc)
     @@ List.map (fun (at, msg) ->
-           let at = find_line_ends at doc in
-           (at, msg))
+        let at = find_line_ends at doc in
+        (at, msg))
     @@ List.concat
     @@ List.map (fun (loc, lst) -> List.map (fun m -> (loc, m)) lst)
     @@ List.sort (fun (a, _) (b, _) -> Int.compare a b) cm.messages
