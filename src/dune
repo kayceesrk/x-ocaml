@@ -7,6 +7,8 @@
   merlin-js.code-mirror
   x_protocol)
  (modes js)
+ (js_of_ocaml
+  (javascript_files ../oxcaml_shims.js))
  (preprocess
   (pps ppx_blob))
  (preprocessor_deps
