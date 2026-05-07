@@ -17,13 +17,18 @@ let current_url =
   in
   Jstr.to_string (Uri.to_jstr url)
 
+let origin =
+  Jstr.to_string @@ Jv.to_jstr
+  @@ Jv.get (Jv.get (Window.to_jv G.window) "location") "origin"
+
 let absolute_url url =
   if
-    not
-      (String.starts_with ~prefix:"http:" url
-      || String.starts_with ~prefix:"https:" url)
-  then current_url ^ url
-  else url
+    String.starts_with ~prefix:"http:" url
+    || String.starts_with ~prefix:"https:" url
+  then url
+  else if String.starts_with ~prefix:"//" url then "https:" ^ url
+  else if String.starts_with ~prefix:"/" url then origin ^ url
+  else current_url ^ url
 
 let wrap_url ?extra_load url =
   let url = absolute_url url in
