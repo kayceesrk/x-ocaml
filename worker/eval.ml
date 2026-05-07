@@ -1,6 +1,26 @@
 open Js_of_ocaml_toplevel
 open X_protocol
 
+(* Force jsoo to link Stdlib__Modes. Without this, dead-code elimination
+   strips Modes from the toplevel bundle, and any library (such as
+   Basement) that references Stdlib__Modes at runtime fails to load. *)
+let force_modes_link : unit ref = ref ()
+let () =
+  force_modes_link := (Modes.Portable.{ portable = () }).portable;
+  force_modes_link := (Modes.Contended.{ contended = () }).contended;
+  force_modes_link := (Modes.Aliased.{ aliased = () }).aliased;
+  force_modes_link := (Modes.Shared.{ shared = () }).shared;
+  force_modes_link := (Modes.Many.{ many = () }).many;
+  force_modes_link := (Modes.Global.{ global = () }).global;
+  force_modes_link := (Modes.Portended.{ portended = () }).portended;
+  force_modes_link := (Modes.Unyielding.{ unyielding = () }).unyielding;
+  Printf.printf "%!" (* prevent inlining away *)
+
+(* Enable the alpha extension universe so user code in the toplevel can
+   use kind annotations like [: value mod contended portable]. Without
+   this, those annotations parse silently but don't take effect. *)
+let () = Language_extension.set_universe_and_enable_all_of_string_exn "alpha"
+
 let environments = ref []
 
 let setup_toplevel () =
