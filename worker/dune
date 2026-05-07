@@ -5,10 +5,7 @@
   js_of_ocaml
   js_of_ocaml-toplevel
   x_protocol
-  merlin-js.worker
-  ocamlformat-lib
-  ocamlformat-lib.parser_extended
-  ocamlformat-lib.format_))
+  merlin-js.worker))
 
 (rule
  (targets export.txt)
