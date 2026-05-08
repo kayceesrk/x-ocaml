@@ -8,5 +8,4 @@
    --export=%{dep:../export.txt}
    --toplevel
    --effects=cps
-   --enable=effects
-   --enable=use-js-string)))
+   --enable=effects)))
