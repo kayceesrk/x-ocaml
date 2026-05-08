@@ -39,9 +39,11 @@ let refresh_messages ed =
        [ render_messages ed ]);
   Code_mirror.Editor.View.request_measure ed.view
 
-let custom_ln editor =
-  Code_mirror.Editor.View.line_numbers (fun x ->
-      string_of_int (editor.previous_lines + x))
+let custom_ln _editor =
+  (* Per-cell line numbers (1, 2, ...). Cumulative numbering would not
+     match the line numbers reported by the OCaml toplevel in error
+     messages, since the toplevel sees only the cell's own source. *)
+  Code_mirror.Editor.View.line_numbers (fun x -> string_of_int x)
 
 let refresh_lines ed =
   Code_mirror.Editor.View.dispatch ed.view
