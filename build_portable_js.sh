@@ -27,8 +27,13 @@ stdlib_cma_js="_build/default/.js/effects=cps+toplevel/stdlib/stdlib.cma.js"
 [ -f "$basement_runtime" ] || { echo "missing $basement_runtime — run: opam install basement"; exit 1; }
 [ -f "$stdlib_cma_js" ]   || { echo "missing $stdlib_cma_js — run: dune build"; exit 1; }
 
-# 1. Bundle basement (and only basement) into a candidate portable.js.
-dune exec bin/x_ocaml.exe -- --effects basement -o portable_raw.js >/dev/null
+# 1. Bundle basement (giving Portable.Atomic) plus the lower-level capsule
+#    libraries (giving Capsule_expert and Capsule_blocking_sync.Mutex).
+#    Both capsule0 sublibraries depend only on basement, so the bundle
+#    stays small (~2 MB instead of the ~270 MB the full [portable] +
+#    [capsule] dep tree would pull in via base/sexplib0/etc.).
+dune exec bin/x_ocaml.exe -- --effects \
+  basement capsule0.expert capsule0.blocking_sync -o portable_raw.js >/dev/null
 
 # 2. Extract the Stdlib__Modes IIFE from the precompiled stdlib.cma.js.
 #    awk on Provides:; print up to but not including the next Provides:.
