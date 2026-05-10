@@ -37,7 +37,8 @@ stdlib_cma_js="_build/default/.js/effects=cps+toplevel/stdlib/stdlib.cma.js"
 #
 #    Requires the patched js_of_ocaml on PATH (--toplevel-extend flag).
 dune exec bin/x_ocaml.exe -- --dce --effects \
-  basement capsule0.expert capsule0.blocking_sync -o portable_raw.js >/dev/null
+  basement capsule0.expert capsule0.blocking_sync \
+  -o portable_raw.js >/dev/null
 
 # 2. Extract the Stdlib__Modes IIFE from the precompiled stdlib.cma.js.
 #    awk on Provides:; print up to but not including the next Provides:.

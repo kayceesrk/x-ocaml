@@ -203,13 +203,26 @@ let main_dce effects targets _ppxs output =
         runtime.js files plus the bytecode. --toplevel-extend produces a
         kind=cma bundle that loads cleanly into an existing in-browser
         toplevel without clobbering its symbol table or typing
-        environment. *)
+        environment.
+
+        We pass -I for every transitive dep dir so jsoo can find the .cmi
+        files to embed under /static/cmis/ in the output. Without this,
+        the bundle ships modules with no interface and the host toplevel
+        rejects [open Module] with an "Unbound module" error even though
+        the value-side registration succeeded. *)
   let extra_js = Cmd.of_list runtime_jss in
+  let include_args =
+    List.fold_left
+      (fun acc d -> Cmd.(acc % "-I" % d))
+      Cmd.empty
+      (List.filter (fun d -> d <> "") dep_dirs)
+  in
   let _ =
     get_result @@ OS.Cmd.run_out
     @@ Cmd.(
         v "js_of_ocaml" % "--toplevel-extend" %% effects
         % "--export" % p units_txt
+        %% include_args
         %% extra_js
         % p stub_byte
         % "-o" % output)

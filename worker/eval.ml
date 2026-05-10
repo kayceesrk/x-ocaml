@@ -16,6 +16,15 @@ let () =
   force_modes_link := (Modes.Unyielding.{ unyielding = () }).unyielding;
   Printf.printf "%!" (* prevent inlining away *)
 
+(* Force-link Printexc.Safe.register_printer. Without this, jsoo DCEs
+   it from the worker bundle (the worker itself never calls it), and
+   any extension bundle whose modules call register_printer at init
+   (e.g. await.kernel, await.sync) raises Not_found on load. *)
+let force_printexc_safe : unit ref = ref ()
+let () =
+  force_printexc_safe := Printexc.Safe.register_printer (fun _ -> None);
+  Printf.printf "%!"
+
 (* Enable the alpha extension universe so user code in the toplevel can
    use kind annotations like [: value mod contended portable]. Without
    this, those annotations parse silently but don't take effect. *)
