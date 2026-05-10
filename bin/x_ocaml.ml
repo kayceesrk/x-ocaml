@@ -136,6 +136,84 @@ let main effects targets ppxs output =
     Ok ()
   with _ -> Error (`Msg "export failed")
 
+(* --dce mode: build a single bytecode that links in the requested libraries
+   with -linkall, then run [js_of_ocaml --toplevel --export units.txt]. The
+   linker performs cross-cma DCE based on which units are reachable from the
+   exports. Output is a [kind=exe] bundle, one or two orders of magnitude
+   smaller than the per-cma concatenation produced by [main] above.
+
+   Caveat: the resulting bundle is an executable, not a library. Loaded into
+   an existing in-browser toplevel via [src-load], its runtime initialisation
+   resets the toplevel typing environment captured by the worker, so cells
+   cannot [open] modules from this bundle. The bundle itself is correct (cmis
+   are at /static/cmis/, modules registered in [caml_get_global_data]); the
+   integration step that connects an exe-shaped bundle to an existing
+   toplevel is the next thing to solve.
+
+   Usage:
+     x-ocaml --dce --effects await capsule0.expert basement -o portable.js *)
+let main_dce effects targets _ppxs output =
+  let effects =
+    if effects then Cmd.(v "--effects=cps" % "--enable=effect") else Cmd.empty
+  in
+  let workdir = Bos.OS.Dir.tmp "x-ocaml-dce-%s" |> or_fail in
+  let stub_ml = Fpath.add_seg workdir "stub.ml" in
+  let stub_byte = Fpath.add_seg workdir "stub.byte" in
+  let units_txt = Fpath.add_seg workdir "units.txt" in
+  Bos.OS.File.write stub_ml "let () = ()\n" |> or_fail;
+
+  let pkg = String.concat "," targets in
+
+  (* 1. Bytecode with -linkall to keep every unit reachable. *)
+  let _ =
+    get_result @@ OS.Cmd.run_out
+    @@ Cmd.(
+        v "ocamlfind" % "ocamlc"
+        % "-package" % pkg
+        % "-linkpkg" % "-linkall"
+        % p stub_ml % "-o" % p stub_byte)
+  in
+
+  (* 2. Export list: the toplevel-visible modules of [targets]. *)
+  let _ =
+    get_result @@ OS.Cmd.run_out
+    @@ Cmd.(
+        v "jsoo_listunits" % "-o" % p units_txt %% (of_list targets))
+  in
+
+  (* 3. Auto-discover runtime.js files from all transitive deps. *)
+  let dep_dirs =
+    lines @@ get_result @@ OS.Cmd.run_out
+    @@ Cmd.(v "ocamlfind" % "query" % "-r" %% (of_list targets))
+  in
+  let runtime_jss =
+    List.filter_map
+      (fun d ->
+        let p = Filename.concat d "runtime.js" in
+        if Sys.file_exists p then Some p else None)
+      dep_dirs
+  in
+
+  (* 4. js_of_ocaml --toplevel --export units.txt with all the runtime.js
+        files plus the bytecode. *)
+  let extra_js = Cmd.of_list runtime_jss in
+  let _ =
+    get_result @@ OS.Cmd.run_out
+    @@ Cmd.(
+        v "js_of_ocaml" % "--toplevel" %% effects
+        % "--export" % p units_txt
+        %% extra_js
+        % p stub_byte
+        % "-o" % output)
+  in
+  Format.printf "wrote %s (DCE-bundled)@." output;
+  Ok ()
+
+let main_dce_unit effects targets ppxs output =
+  match main_dce effects targets ppxs output with
+  | Ok () -> ()
+  | Error (`Msg m) -> fatal m
+
 open Cmdliner
 
 let arg_output =
@@ -156,6 +234,23 @@ let ppxs =
   let open Arg in
   value & opt_all string [] & info [ "p"; "ppx" ] ~docv:"PPX" ~doc:"PPX"
 
-let main_term = Term.(const main $ with_effects $ targets $ ppxs $ arg_output)
+let with_dce =
+  let open Arg in
+  value & flag
+  & info [ "dce" ]
+      ~doc:
+        "Cross-cma dead-code elimination: build a single bytecode and run \
+         js_of_ocaml --toplevel --export, instead of concatenating per-cma \
+         outputs. Yields much smaller bundles (often 100x), at the cost of \
+         producing a kind=exe artifact that may not compose cleanly with \
+         existing in-browser toplevels (see source comment for the integration \
+         caveat)."
+
+let dispatch dce effects targets ppxs output =
+  if dce then main_dce_unit effects targets ppxs output
+  else main effects targets ppxs output
+
+let main_term =
+  Term.(const dispatch $ with_dce $ with_effects $ targets $ ppxs $ arg_output)
 let cmd_main = Cmd.v (Cmd.info "x-ocaml") main_term
 let () = exit @@ Cmd.eval cmd_main
