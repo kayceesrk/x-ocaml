@@ -137,21 +137,26 @@ let main effects targets ppxs output =
   with _ -> Error (`Msg "export failed")
 
 (* --dce mode: build a single bytecode that links in the requested libraries
-   with -linkall, then run [js_of_ocaml --toplevel --export units.txt]. The
-   linker performs cross-cma DCE based on which units are reachable from the
-   exports. Output is a [kind=exe] bundle, one or two orders of magnitude
-   smaller than the per-cma concatenation produced by [main] above.
+   with -linkall, then run
+   [js_of_ocaml --toplevel-extend --export units.txt].
 
-   Caveat: the resulting bundle is an executable, not a library. Loaded into
-   an existing in-browser toplevel via [src-load], its runtime initialisation
-   resets the toplevel typing environment captured by the worker, so cells
-   cannot [open] modules from this bundle. The bundle itself is correct (cmis
-   are at /static/cmis/, modules registered in [caml_get_global_data]); the
-   integration step that connects an exe-shaped bundle to an existing
-   toplevel is the next thing to solve.
+   The linker performs cross-cma DCE based on which units are reachable from
+   the exports. Output is a [kind=cma] bundle that loads cleanly into an
+   existing in-browser toplevel via [src-load], one or two orders of
+   magnitude smaller than the per-cma concatenation produced by [main]
+   above.
+
+   [--toplevel-extend] is a jsoo flag we added (kc-toplevel-extend branch of
+   ocsigen/js_of_ocaml). It emits the [--toplevel --export] bundle as
+   non-standalone and skips the [caml_js_set] writes that overwrite the host
+   toplevel's [caml_global_data.{symbols,sections,prim_count,aliases}]
+   tables, so the host's symbol table and typing environment survive the
+   load. Modules from the bundle still register themselves via
+   [caml_register_global], which the runtime correctly merges via [symidx].
 
    Usage:
-     x-ocaml --dce --effects await capsule0.expert basement -o portable.js *)
+     x-ocaml --dce --effects basement capsule0.expert capsule0.blocking_sync \
+       -o portable.js *)
 let main_dce effects targets _ppxs output =
   let effects =
     if effects then Cmd.(v "--effects=cps" % "--enable=effect") else Cmd.empty
@@ -194,13 +199,16 @@ let main_dce effects targets _ppxs output =
       dep_dirs
   in
 
-  (* 4. js_of_ocaml --toplevel --export units.txt with all the runtime.js
-        files plus the bytecode. *)
+  (* 4. js_of_ocaml --toplevel-extend --export units.txt with all the
+        runtime.js files plus the bytecode. --toplevel-extend produces a
+        kind=cma bundle that loads cleanly into an existing in-browser
+        toplevel without clobbering its symbol table or typing
+        environment. *)
   let extra_js = Cmd.of_list runtime_jss in
   let _ =
     get_result @@ OS.Cmd.run_out
     @@ Cmd.(
-        v "js_of_ocaml" % "--toplevel" %% effects
+        v "js_of_ocaml" % "--toplevel-extend" %% effects
         % "--export" % p units_txt
         %% extra_js
         % p stub_byte
@@ -240,11 +248,12 @@ let with_dce =
   & info [ "dce" ]
       ~doc:
         "Cross-cma dead-code elimination: build a single bytecode and run \
-         js_of_ocaml --toplevel --export, instead of concatenating per-cma \
-         outputs. Yields much smaller bundles (often 100x), at the cost of \
-         producing a kind=exe artifact that may not compose cleanly with \
-         existing in-browser toplevels (see source comment for the integration \
-         caveat)."
+         js_of_ocaml --toplevel-extend --export, instead of concatenating \
+         per-cma outputs. Yields much smaller bundles (often >10x). Output \
+         is a kind=cma artifact that loads cleanly into an existing \
+         in-browser toplevel without resetting it. Requires the \
+         --toplevel-extend flag from the kc-toplevel-extend branch of \
+         js_of_ocaml."
 
 let dispatch dce effects targets ppxs output =
   if dce then main_dce_unit effects targets ppxs output
