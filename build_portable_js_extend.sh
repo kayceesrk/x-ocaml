@@ -131,15 +131,37 @@ done
   echo "}(globalThis));"
 } > runtime_attach.js
 
-# 4. Concatenate in load order: Modes registration, every transitive
-#    runtime.js (so jsoo_runtime.<name> lookups resolve at load time
-#    -- the bundle's IR uses dynamic [globalThis.jsoo_runtime.foo]
-#    accesses that bypass jsoo's static link), attach helper, then the
-#    raw bundle. The attach helper publishes each //Provides: as a
-#    property on jsoo_runtime, since the bundle resolves them via
-#    property lookup rather than as free names.
-cat stdlib_modes.js runtime_bridge.js $runtime_jss runtime_attach.js portable_raw.js > portable.js
+# 4. Wrap the raw bundle in a DLS-preserving harness. The bundle
+#    re-runs stdlib's module init, which re-allocates [Domain.DLS]
+#    keys starting from index 0 -- colliding with the host's already
+#    populated slots. [Format.stdbuf_key], [Random]'s state, etc.
+#    end up pointing at the bundle's fresh values, so the host's
+#    [Format.flush_str_formatter] reads buffers the host never wrote
+#    to (merlin's type printer returns the empty string). Snapshot
+#    the host's DLS array before the bundle runs and restore the
+#    host-owned slots afterwards.
+{
+  echo "(function (globalThis) {"
+  echo "  var rt = globalThis.jsoo_runtime;"
+  echo "  var saved = rt.caml_domain_dls_get(0);"
+  echo "  var snapshot = [];"
+  echo "  for (var i = 0; i < saved.length; i++) snapshot[i] = saved[i];"
+  echo "  try {"
+} > dls_pre.js
+{
+  echo "  } finally {"
+  echo "    var cur = rt.caml_domain_dls_get(0);"
+  echo "    for (var i = 0; i < snapshot.length; i++) {"
+  echo "      if (snapshot[i] !== undefined) cur[i] = snapshot[i];"
+  echo "    }"
+  echo "  }"
+  echo "}(globalThis));"
+} > dls_post.js
 
-rm -f stdlib_modes.js runtime_bridge.js runtime_attach.js portable_raw.js
+cat stdlib_modes.js runtime_bridge.js $runtime_jss runtime_attach.js \
+    dls_pre.js portable_raw.js dls_post.js > portable.js
+
+rm -f stdlib_modes.js runtime_bridge.js runtime_attach.js \
+      dls_pre.js dls_post.js portable_raw.js
 
 ls -lh portable.js
