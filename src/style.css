@@ -1,11 +1,12 @@
 :host { display: block; position: relative; font-family: monospace; font-size: 1.2em }
 .cm-editor.cm-focused { outline: 1px dotted #AAA !important }
 .cm-tooltip-section {
-  max-width: 400px;
-  height: 1lh;
-  text-overflow: ellipsis; /* not working, because width/height must be px(?) */
+  max-width: 60ch;
+  max-height: 18em;
   padding: 0.3em 0.5em;
-  overflow: hidden;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .cm-lineNumbers { min-width: 30px }
 .cm-activeLine, .cm-activeLineGutter { background: transparent !important }
