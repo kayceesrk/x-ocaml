@@ -7,7 +7,7 @@ license: "MIT"
 homepage: "https://github.com/art-w/x-ocaml"
 bug-reports: "https://github.com/art-w/x-ocaml/issues"
 depends: [
-  "dune" {>= "3.10"}
+  "dune" {>= "3.17"}
   "bos" {>= "0.2.1"}
   "brr" {>= "0.0.7"}
   "cmdliner" {>= "1.3.0"}

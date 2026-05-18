@@ -3,6 +3,7 @@
  (libraries x_worker)
  (modes js)
  (js_of_ocaml
+  (sourcemap no)
   (flags
    --export=%{dep:../export.txt}
    --toplevel
