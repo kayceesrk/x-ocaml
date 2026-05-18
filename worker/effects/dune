@@ -4,6 +4,7 @@
  (modes js)
  (js_of_ocaml
   (javascript_files ../../oxcaml_shims.js)
+  (sourcemap no)
   (flags
    --export=%{dep:../export.txt}
    --toplevel
