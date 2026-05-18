@@ -17,8 +17,14 @@ let define name fn =
   let test = Lazy.force test in
   Jv.set test "prototype" (Jv.get html_element "prototype");
   Jv.set Jv.global "__xocaml_exported" (Jv.callback ~arity:1 fn);
+  (* Guard against double-init when the element gets moved between
+     parents (e.g. reveal.js relocating slide sections). The first
+     connect attaches a shadow; subsequent connects must be no-ops. *)
   Jv.set (Jv.get test "prototype") "connectedCallback"
-    (jv_pure_js_expr "(function() { return __xocaml_exported(this) })");
+    (jv_pure_js_expr
+       "(function() { if (this.__xocaml_inited) return; \
+                       this.__xocaml_inited = true; \
+                       return __xocaml_exported(this) })");
   let _ : Jv.t = Jv.call custom_elements "define" [| Jv.of_jstr name; test |] in
   ()
 
