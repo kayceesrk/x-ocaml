@@ -85,7 +85,16 @@ module Toplevel_setup = struct
 
   let run () =
     JsooTop.initialize ();
+    (* JsooTop.initialize sets up the typing env but does not populate
+       the bytecode symbol table with predefined exceptions
+       (Match_failure, Assert_failure, etc.). Without this, compiling
+       any partial match fails at link time with
+       "Reference to undefined predefined exception". *)
+    (try Symtable.init () with _ -> ());
     Sys.interactive := false;
+    ignore
+      (Warnings.parse_options false "+a-4-9-40-41-42-44-45-48-58-59-60-67-68-69-70"
+        : Warnings.alert option);
     Environment.init ();
     List.iter (fun f -> f ()) directives
 end
