@@ -7,6 +7,11 @@ type t = {
   mutable prev : t option;
   mutable next : t option;
   mutable status : status;
+  mutable errored : bool;
+      (* Did this cell's last run produce a compile/type error? Such a
+         cell is excluded from [pre_source] below, so a deliberate
+         "this is rejected" demo does not poison merlin's typing (and
+         thus type-on-hover and lint) for every later cell. *)
   cm : Editor.t;
   worker : Client.t;
   merlin_worker : Merlin_ext.Client.worker;
@@ -14,11 +19,49 @@ type t = {
 
 let id t = t.id
 
+(* A heuristic: the in-browser toplevel renders compile/type errors
+   via [Errors.report_error], which always prints "Error:". A
+   successful [val]/[type]/[module] echo never contains that exact
+   token (a [| Error of ...] variant echo is "Error of", not
+   "Error:"). *)
+let contains_substring hay needle =
+  let lh = String.length hay and ln = String.length needle in
+  if ln = 0 then true
+  else
+    let rec go i =
+      if i + ln > lh then false
+      else if String.sub hay i ln = needle then true
+      else go (i + 1)
+    in
+    go 0
+
+let output_has_error (msg : X_protocol.output list) =
+  List.exists
+    (fun o ->
+      let s =
+        match (o : X_protocol.output) with
+        | Stdout s | Stderr s | Meta s -> s
+      in
+      contains_substring s "Error:")
+    msg
+
+(* The source of every cell before [t] in chain order, used as the
+   prefix of merlin's buffer so queries on [t] see the cumulative
+   context. The walk goes nearest-prev first and conses, so the
+   accumulator is already in chain (document) order when the head is
+   reached: do NOT List.rev it (doing so feeds merlin the cells
+   reversed, which silently breaks typing for any cell whose
+   predecessors depend on each other, e.g. [module M : S] before
+   [module type S]). *)
 let pre_source t =
   let rec go acc t =
     match t.prev with
-    | None -> String.concat "\n" (List.rev acc)
-    | Some e -> go (Editor.source e.cm :: acc) e
+    | None -> String.concat "\n" acc
+    | Some e ->
+        (* Skip cells whose last run errored: their source would make
+           merlin fail to type every later cell's cumulative buffer. *)
+        let acc = if e.errored then acc else Editor.source e.cm :: acc in
+        go acc e
   in
   let s = go [] t in
   if s = "" then s else s ^ " ;;\n"
@@ -54,6 +97,7 @@ let rec run editor =
   if editor.status = Running then ()
   else (
     editor.status <- Request_run;
+    editor.errored <- false;
     Editor.clear_messages editor.cm;
     match editor.prev with
     | Some e when e.status <> Run_ok -> run e
@@ -62,19 +106,24 @@ let rec run editor =
         let code_txt = Editor.source editor.cm in
         Client.eval ~id:editor.id editor.worker code_txt)
 
-let set_prev ~prev t =
-  let () = match t.prev with None -> () | Some prev -> prev.next <- None in
+(* Splice [t] into the doubly-linked cell chain between [prev] and
+   [next] (either may be [None]). Unlike a tail-only append, this
+   supports insertion in *document order* even when custom elements
+   connect out of order (e.g. the host page moves sections around
+   before the component script registers). The chain order defines
+   the cumulative toplevel/merlin context, so it must match what the
+   reader sees on the page. *)
+let insert ~prev ~next t =
   t.prev <- prev;
-  match prev with
-  | None ->
-      Editor.set_previous_lines t.cm 0;
-      refresh_lines_from ~editor:t;
-      run t
-  | Some p ->
-      assert (p.next = None);
-      p.next <- Some t;
-      refresh_lines_from ~editor:p;
-      run t
+  t.next <- next;
+  (match prev with Some p -> p.next <- Some t | None -> ());
+  (match next with Some n -> n.prev <- Some t | None -> ());
+  (match prev with
+  | None -> Editor.set_previous_lines t.cm 0
+  | Some p -> Editor.set_previous_lines t.cm (Editor.nb_lines p.cm));
+  refresh_lines_from ~editor:t;
+  (match next with Some n -> invalidate_from ~editor:n | None -> ());
+  run t
 
 let set_source_from_html editor this =
   let doc = Webcomponent.text_content this in
@@ -100,6 +149,7 @@ let init ~id worker this =
     {
       id;
       status = Not_run;
+      errored = false;
       cm;
       prev = None;
       next = None;
@@ -140,12 +190,14 @@ let render_message msg =
     [ El.txt (Jstr.of_string text) ]
 
 let add_message t loc msg =
+  if output_has_error msg then t.errored <- true;
   Editor.add_message t.cm loc (List.map render_message msg)
 
 let completed_run ed msg =
-  (if msg <> [] then
+  (if msg <> [] then (
+     if output_has_error msg then ed.errored <- true;
      let loc = String.length (Editor.source ed.cm) in
-     add_message ed loc msg);
+     add_message ed loc msg));
   ed.status <- Run_ok;
   match ed.next with Some e when e.status = Request_run -> run e | _ -> ()
 
