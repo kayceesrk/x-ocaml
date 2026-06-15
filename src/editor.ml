@@ -16,6 +16,34 @@ let find_line_ends at doc =
   in
   go at
 
+(* [current_doc] is UTF-8 bytes; CodeMirror positions are UTF-16 code
+   units. Convert between the two so byte-based line scanning produces
+   in-range CodeMirror offsets for non-ASCII source. *)
+let utf8_seq_len b =
+  if b < 0x80 then 1 else if b < 0xe0 then 2 else if b < 0xf0 then 3 else 4
+
+let cp_utf16_units lead = if lead >= 0xf0 then 2 else 1
+
+let byte_to_utf16 s byte_off =
+  let n = String.length s in
+  let rec go i u =
+    if i >= byte_off || i >= n then u
+    else
+      let b = Char.code (String.unsafe_get s i) in
+      go (i + utf8_seq_len b) (u + cp_utf16_units b)
+  in
+  go 0 0
+
+let utf16_to_byte s u_off =
+  let n = String.length s in
+  let rec go i u =
+    if u >= u_off || i >= n then i
+    else
+      let b = Char.code (String.unsafe_get s i) in
+      go (i + utf8_seq_len b) (u + cp_utf16_units b)
+  in
+  go 0 0
+
 let render_messages cm =
   let open Code_mirror.Editor in
   let open Code_mirror.Decoration in
@@ -24,13 +52,12 @@ let render_messages cm =
   let ranges =
     Array.of_list
     @@ List.map (fun (at, msg) ->
-        range ~from:at ~to_:at
-        @@ widget ~block:true ~side:99
-        @@ Widget.make (fun () -> msg))
-    @@ List.filter (fun (at, _) -> at <= String.length doc)
-    @@ List.map (fun (at, msg) ->
-        let at = find_line_ends at doc in
-        (at, msg))
+           (* [at] is a CodeMirror (UTF-16) offset; scan for the line end in
+              byte space, then map back to UTF-16 *)
+           let at = byte_to_utf16 doc (find_line_ends (utf16_to_byte doc at) doc) in
+           range ~from:at ~to_:at
+           @@ widget ~block:true ~side:99
+           @@ Widget.make (fun () -> msg))
     @@ List.concat
     @@ List.map (fun (loc, lst) -> List.map (fun m -> (loc, m)) lst)
     @@ List.sort (fun (a, _) (b, _) -> Int.compare a b) cm.messages
@@ -70,6 +97,15 @@ let source_of_state s =
   @@ Code_mirror.Editor.State.doc s
 
 let source t = source_of_state @@ Code_mirror.Editor.View.state t.view
+
+(* CodeMirror document length, in UTF-16 code units. This is the unit
+   CodeMirror positions use; [String.length (source t)] is the UTF-8
+   byte length, which overshoots for non-ASCII source and makes
+   message placement throw "Position N out of range". *)
+let doc_length t =
+  Code_mirror.Text.length
+  @@ Code_mirror.Editor.State.doc
+  @@ Code_mirror.Editor.View.state t.view
 
 let prefix_length a b =
   let rec go i =
@@ -156,6 +192,20 @@ let set_messages t msg =
 let clear_messages t = set_messages t []
 let add_message t loc msg = set_messages t ((loc, msg) :: t.messages)
 
+(* [doc] is UTF-8 bytes; decode to a JS string so CodeMirror's document
+   length is in UTF-16 units (matching its positions). Jstr.of_string does
+   not reliably decode here, leaving the doc at its byte length, which makes
+   decoration mapping throw for non-ASCII source. *)
+let jstr_of_utf8 (s : string) : Jstr.t =
+  let bytes =
+    Array.init (String.length s) (fun i -> Char.code (String.unsafe_get s i))
+  in
+  let arr = Brr.Tarray.of_int_array Brr.Tarray.Uint8 bytes in
+  let decoder =
+    Jv.new' (Jv.get Jv.global "TextDecoder") [| Jv.of_string "utf-8" |]
+  in
+  Jv.to_jstr (Jv.call decoder "decode" [| Brr.Tarray.to_jv arr |])
+
 let set_source t doc =
   set_current_doc t doc;
-  Code_mirror.Editor.View.set_doc t.view (Jstr.of_string doc)
+  Code_mirror.Editor.View.set_doc t.view (jstr_of_utf8 doc)

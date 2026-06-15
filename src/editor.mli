@@ -2,6 +2,7 @@ type t
 
 val make : Brr.El.t -> t
 val source : t -> string
+val doc_length : t -> int
 val set_source : t -> string -> unit
 val clear : t -> unit
 val nb_lines : t -> int
