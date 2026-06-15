@@ -178,6 +178,20 @@ let set_source editor doc =
   Editor.set_source editor.cm doc;
   refresh_lines_from ~editor
 
+(* Toplevel output is a stream of UTF-8 bytes (an OCaml string). Brr's
+   [Jstr.of_string] does not reliably turn those bytes into a JS string
+   under this build, so non-ASCII output (e.g. printing "தமிழ்") is
+   dropped. Decode the raw bytes through the browser's TextDecoder
+   instead; reading with [String.get] is byte-accurate regardless of the
+   js_of_ocaml string representation. *)
+let jstr_of_utf8 (s : string) : Jstr.t =
+  let bytes =
+    Array.init (String.length s) (fun i -> Char.code (String.unsafe_get s i))
+  in
+  let arr = Tarray.of_int_array Tarray.Uint8 bytes in
+  let decoder = Jv.new' (Jv.get Jv.global "TextDecoder") [| Jv.of_string "utf-8" |] in
+  Jv.to_jstr (Jv.call decoder "decode" [| Tarray.to_jv arr |])
+
 let render_message msg =
   let kind, text =
     match msg with
@@ -187,15 +201,38 @@ let render_message msg =
   in
   El.pre
     ~at:[ At.class' (Jstr.of_string ("caml_" ^ kind)) ]
-    [ El.txt (Jstr.of_string text) ]
+    [ El.txt (jstr_of_utf8 text) ]
+
+(* The toplevel reports the source location to anchor output at as a UTF-8
+   byte offset; CodeMirror positions are UTF-16 code units. Convert, or a
+   non-ASCII cell anchors output past the end of the document and throws. *)
+let byte_to_utf16 s byte_off =
+  let n = String.length s in
+  let rec go i u =
+    if i >= byte_off || i >= n then u
+    else
+      let b = Char.code (String.unsafe_get s i) in
+      let len =
+        if b < 0x80 then 1 else if b < 0xe0 then 2 else if b < 0xf0 then 3 else 4
+      in
+      let units = if len = 4 then 2 else 1 in
+      go (i + len) (u + units)
+  in
+  go 0 0
 
 let add_message t loc msg =
   if output_has_error msg then t.errored <- true;
+  (* [loc] is a UTF-8 byte offset from the toplevel; CodeMirror positions
+     are UTF-16 code units. Convert, or a non-ASCII cell anchors output
+     past the end of the document and throws. *)
+  let loc = byte_to_utf16 (Editor.source t.cm) loc in
   Editor.add_message t.cm loc (List.map render_message msg)
 
 let completed_run ed msg =
   (if msg <> [] then (
      if output_has_error msg then ed.errored <- true;
+     (* byte length of the source; [add_message] maps it to a UTF-16
+        offset (the end of the cell) for CodeMirror *)
      let loc = String.length (Editor.source ed.cm) in
      add_message ed loc msg));
   ed.status <- Run_ok;
@@ -203,4 +240,4 @@ let completed_run ed msg =
 
 let receive_merlin t msg =
   Merlin_ext.Client.on_message t.merlin_worker
-    (Merlin_ext.fix_answer (pre_source t) msg)
+    (Merlin_ext.fix_answer (pre_source t) (Editor.source t.cm) msg)
